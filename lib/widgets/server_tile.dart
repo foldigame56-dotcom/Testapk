@@ -31,10 +31,10 @@ class ServerTile extends StatelessWidget {
 
   Color _pingColor() {
     if (pingMs == null) return Colors.grey;
-    if (pingMs == -1) return Colors.redAccent;
+    if (pingMs == -1) return AppTheme.danger;
     if (pingMs! < 150) return AppTheme.connectedGreen;
-    if (pingMs! < 400) return Colors.orangeAccent;
-    return Colors.redAccent;
+    if (pingMs! < 400) return AppTheme.gold;
+    return AppTheme.danger;
   }
 
   String _pingText() {
@@ -51,14 +51,14 @@ class ServerTile extends StatelessWidget {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
         side: selected
-            ? const BorderSide(color: AppTheme.accent, width: 1.5)
-            : BorderSide.none,
+            ? const BorderSide(color: AppTheme.cyan, width: 1.5)
+            : BorderSide(color: AppTheme.surfaceLight, width: 1),
       ),
       child: ListTile(
         onTap: onTap,
         leading: Icon(
           selected ? Icons.radio_button_checked : Icons.radio_button_off,
-          color: selected ? AppTheme.accent : Colors.grey,
+          color: selected ? AppTheme.cyan : Colors.grey,
         ),
         title: Text(_remark, overflow: TextOverflow.ellipsis),
         trailing: pinging
