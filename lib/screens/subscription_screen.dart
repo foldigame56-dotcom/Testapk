@@ -46,6 +46,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   Widget build(BuildContext context) {
     final store = context.watch<ServerStore>();
     return Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: AppBar(title: const Text('Подписка')),
       body: Padding(
         padding: const EdgeInsets.all(16),
