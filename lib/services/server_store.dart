@@ -5,9 +5,14 @@ import 'subscription_service.dart';
 const _kSubUrlKey = 'subscription_url';
 const _kServersKey = 'servers_list';
 const _kSelectedKey = 'selected_server';
+const _kTitleKey = 'sub_title';
+const _kUsedKey = 'sub_used';
+const _kTotalKey = 'sub_total';
+const _kExpireKey = 'sub_expire';
 
-/// Хранит ссылку на подписку (которую выдаёт бот) и список серверов,
-/// полученных из неё. Переживает перезапуск приложения.
+/// Хранит ссылку на подписку (которую выдаёт бот), список серверов и
+/// метаданные подписки (название, трафик, срок действия). Переживает
+/// перезапуск приложения.
 class ServerStore extends ChangeNotifier {
   String? subscriptionUrl;
   List<String> servers = [];
@@ -15,11 +20,23 @@ class ServerStore extends ChangeNotifier {
   bool loading = false;
   String? lastError;
 
+  String? subscriptionTitle;
+  int? trafficUsedBytes;
+  int? trafficTotalBytes;
+  DateTime? expiresAt;
+
   Future<void> loadFromDisk() async {
     final prefs = await SharedPreferences.getInstance();
     subscriptionUrl = prefs.getString(_kSubUrlKey);
     servers = prefs.getStringList(_kServersKey) ?? [];
     selectedServer = prefs.getString(_kSelectedKey);
+    subscriptionTitle = prefs.getString(_kTitleKey);
+    trafficUsedBytes = prefs.getInt(_kUsedKey);
+    trafficTotalBytes = prefs.getInt(_kTotalKey);
+    final expireMs = prefs.getInt(_kExpireKey);
+    expiresAt = expireMs != null
+        ? DateTime.fromMillisecondsSinceEpoch(expireMs)
+        : null;
     notifyListeners();
   }
 
@@ -40,11 +57,28 @@ class ServerStore extends ChangeNotifier {
     lastError = null;
     notifyListeners();
     try {
-      final fetched = await SubscriptionService.fetchServers(subscriptionUrl!);
-      servers = fetched;
+      final result = await SubscriptionService.fetchServers(subscriptionUrl!);
+      servers = result.servers;
+      subscriptionTitle = result.info.title;
+      trafficUsedBytes = result.info.trafficUsedBytes;
+      trafficTotalBytes = result.info.trafficTotalBytes;
+      expiresAt = result.info.expiresAt;
+
       final prefs = await SharedPreferences.getInstance();
       await prefs.setStringList(_kServersKey, servers);
-      // Если выбранного сервера больше нет в списке — сбрасываем выбор.
+      if (subscriptionTitle != null) {
+        await prefs.setString(_kTitleKey, subscriptionTitle!);
+      }
+      if (trafficUsedBytes != null) {
+        await prefs.setInt(_kUsedKey, trafficUsedBytes!);
+      }
+      if (trafficTotalBytes != null) {
+        await prefs.setInt(_kTotalKey, trafficTotalBytes!);
+      }
+      if (expiresAt != null) {
+        await prefs.setInt(_kExpireKey, expiresAt!.millisecondsSinceEpoch);
+      }
+
       if (selectedServer != null && !servers.contains(selectedServer)) {
         selectedServer = null;
         await prefs.remove(_kSelectedKey);

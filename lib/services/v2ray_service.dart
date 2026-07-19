@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_v2ray/flutter_v2ray.dart';
+import 'settings_store.dart';
 
 /// Обёртка над flutter_v2ray, которая держит состояние подключения
 /// и уведомляет UI через ChangeNotifier.
@@ -30,22 +31,28 @@ class V2RayService extends ChangeNotifier {
   Future<bool> requestPermission() => _v2ray.requestPermission();
 
   /// Проверка задержки конкретного сервера (по share-ссылке), в мс.
-  /// Возвращает -1, если сервер недоступен.
+  /// Возвращает -1, если сервер недоступен или проверка не уложилась
+  /// в отведённое время (раньше при зависании метода UI мог ждать вечно —
+  /// теперь через 8 секунд без ответа проверка просто считается неудачной).
   Future<int> pingServer(String shareLink) async {
     try {
       final parsed = FlutterV2ray.parseFromURL(shareLink);
-      return await _v2ray.getServerDelay(config: parsed.getFullConfiguration());
+      final result = await _v2ray
+          .getServerDelay(config: parsed.getFullConfiguration())
+          .timeout(const Duration(seconds: 8));
+      return result;
     } catch (_) {
       return -1;
     }
   }
 
-  Future<void> connect(String shareLink) async {
+  Future<void> connect(String shareLink, {SettingsStore? settings}) async {
     final parsed = FlutterV2ray.parseFromURL(shareLink);
     connectedRemark = parsed.remark.isNotEmpty ? parsed.remark : 'VPN';
     await _v2ray.startV2Ray(
       remark: connectedRemark!,
       config: parsed.getFullConfiguration(),
+      bypassSubnets: (settings?.bypassLan ?? false) ? lanBypassSubnets : null,
       notificationDisconnectButtonName: 'ОТКЛЮЧИТЬ',
     );
     notifyListeners();
