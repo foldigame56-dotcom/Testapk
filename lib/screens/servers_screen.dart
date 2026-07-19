@@ -17,6 +17,7 @@ class _ServersScreenState extends State<ServersScreen> {
   final Map<String, int> _pings = {};
   final Set<String> _pinging = {};
   bool _pingingAll = false;
+  bool _autoSelecting = false;
 
   Future<void> _pingOne(String link) async {
     final v2ray = context.read<V2RayService>();
@@ -29,16 +30,50 @@ class _ServersScreenState extends State<ServersScreen> {
     });
   }
 
+  /// Проверяет все сервера — параллельно (безопасный лимит уже встроен
+  /// в V2RayService, так что тут можно просто запустить всё разом).
   Future<void> _pingAll() async {
     final store = context.read<ServerStore>();
     setState(() => _pingingAll = true);
-    // Пингуем по очереди, а не все разом — параллельный запуск нескольких
-    // V2Ray-проверок задержки одновременно приводит к тому, что они мешают
-    // друг другу и почти все возвращают -1.
-    for (final link in store.servers) {
-      await _pingOne(link);
-    }
+    await Future.wait(store.servers.map(_pingOne));
     if (mounted) setState(() => _pingingAll = false);
+  }
+
+  /// Пингует все сервера, выбирает тот, где меньше всего задержка,
+  /// и делает его текущим выбранным сервером.
+  Future<void> _autoSelectBest() async {
+    final store = context.read<ServerStore>();
+    if (store.servers.isEmpty) return;
+
+    setState(() => _autoSelecting = true);
+    await Future.wait(store.servers.map(_pingOne));
+
+    String? best;
+    int bestPing = 1 << 30;
+    for (final link in store.servers) {
+      final ping = _pings[link];
+      if (ping != null && ping > 0 && ping < bestPing) {
+        bestPing = ping;
+        best = link;
+      }
+    }
+
+    if (!mounted) return;
+    setState(() => _autoSelecting = false);
+
+    if (best == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ни один сервер не ответил, попробуй позже')),
+      );
+      return;
+    }
+
+    await store.selectServer(best);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Выбран лучший сервер — $bestPing мс')),
+      );
+    }
   }
 
   String _formatBytes(int? bytes) {
@@ -55,6 +90,7 @@ class _ServersScreenState extends State<ServersScreen> {
     final hasSubInfo = store.subscriptionTitle != null ||
         store.trafficTotalBytes != null ||
         store.expiresAt != null;
+    final busy = _pingingAll || _autoSelecting;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -70,7 +106,7 @@ class _ServersScreenState extends State<ServersScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.network_check),
-            onPressed: (_pingingAll || store.servers.isEmpty) ? null : _pingAll,
+            onPressed: (busy || store.servers.isEmpty) ? null : _pingAll,
           ),
           IconButton(
             icon: const Icon(Icons.settings),
@@ -132,6 +168,64 @@ class _ServersScreenState extends State<ServersScreen> {
                         ),
                       ],
                     ],
+                  ),
+                ),
+              ),
+            if (store.servers.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(18),
+                    onTap: busy ? null : _autoSelectBest,
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: AppTheme.gold, width: 1.2),
+                        color: AppTheme.gold.withOpacity(0.08),
+                      ),
+                      child: Row(
+                        children: [
+                          _autoSelecting
+                              ? const SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: AppTheme.gold,
+                                  ),
+                                )
+                              : const Icon(Icons.bolt_rounded,
+                                  color: AppTheme.gold),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Автовыбор лучшего сервера',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: AppTheme.gold,
+                                  ),
+                                ),
+                                Text(
+                                  _autoSelecting
+                                      ? 'Проверяю все сервера...'
+                                      : 'Найдёт сервер с минимальным пингом',
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
