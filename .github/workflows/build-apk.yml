@@ -1,5 +1,8 @@
 name: Build GradelVPN APK
 
+# Собирается автоматически при каждом пуше в main — то есть тебе не нужен
+# компьютер: всё, что нужно, это залить файлы проекта в GitHub-репозиторий
+# (можно прямо с телефона, см. README раздел "Сборка APK с телефона").
 on:
   push:
     branches: [main]
@@ -16,6 +19,9 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
 
+      # У нас в репозитории только pubspec.yaml + lib/ (без папки android/).
+      # "flutter create ." безопасно достраивает недостающие платформенные
+      # файлы, не трогая существующие lib/ и pubspec.yaml.
       - name: Scaffold Android platform files
         run: flutter create . --platforms=android --project-name=gradelvpn --org=com.gradelvpn
 
@@ -48,6 +54,10 @@ jobs:
           sed -i "s/id(\"org.jetbrains.kotlin.android\") version \"[^\"]*\"/id(\"org.jetbrains.kotlin.android\") version \"2.1.0\"/" android/settings.gradle.kts || true
           sed -i 's/id "com.android.application" version "[^"]*"/id "com.android.application" version "8.3.0"/' android/settings.gradle || true
           sed -i "s/id(\"com.android.application\") version \"[^\"]*\"/id(\"com.android.application\") version \"8.3.0\"/" android/settings.gradle.kts || true
+
+      - name: Bump Gradle wrapper version
+        run: |
+          sed -i 's#distributionUrl=.*#distributionUrl=https\\://services.gradle.org/distributions/gradle-8.6-all.zip#' android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Install dependencies
         run: flutter pub get
