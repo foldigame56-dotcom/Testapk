@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_v2ray/flutter_v2ray.dart';
 import 'settings_store.dart';
@@ -31,19 +32,45 @@ class V2RayService extends ChangeNotifier {
   Future<bool> requestPermission() => _v2ray.requestPermission();
 
   /// Проверка задержки конкретного сервера (по share-ссылке), в мс.
-  /// Возвращает -1, если сервер недоступен или проверка не уложилась
-  /// в отведённое время (раньше при зависании метода UI мог ждать вечно —
-  /// теперь через 8 секунд без ответа проверка просто считается неудачной).
+  /// Возвращает -1, если сервер реально недоступен.
+  ///
+  /// Важно: нативный движок V2Ray поднимает локальный тестовый прокси для
+  /// каждой проверки и не всегда успевает освободить порт мгновенно после
+  /// предыдущей — из-за этого при частых подряд идущих проверках все, кроме
+  /// первой, ошибочно выглядели как "недоступен". Плюс лочим проверки
+  /// одну за другой (даже если экран дёрнет несколько параллельно) и
+  /// делаем повторную попытку, если первая не удалась.
+  Future<int>? _pingQueue;
+
   Future<int> pingServer(String shareLink) async {
-    try {
-      final parsed = FlutterV2ray.parseFromURL(shareLink);
-      final result = await _v2ray
-          .getServerDelay(config: parsed.getFullConfiguration())
-          .timeout(const Duration(seconds: 8));
-      return result;
-    } catch (_) {
-      return -1;
+    final previous = _pingQueue ?? Future.value(0);
+    final completer = Completer<int>();
+    _pingQueue = completer.future;
+
+    // Ждём завершения предыдущей проверки, прежде чем начинать эту.
+    await previous.catchError((_) => -1);
+
+    int result = -1;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final parsed = FlutterV2ray.parseFromURL(shareLink);
+        final delay = await _v2ray
+            .getServerDelay(config: parsed.getFullConfiguration())
+            .timeout(const Duration(seconds: 15));
+        if (delay > 0) {
+          result = delay;
+          break;
+        }
+      } catch (_) {
+        // пробуем ещё раз ниже
+      }
+      if (attempt == 0) {
+        await Future.delayed(const Duration(milliseconds: 600));
+      }
     }
+
+    completer.complete(result);
+    return result;
   }
 
   Future<void> connect(String shareLink, {SettingsStore? settings}) async {
