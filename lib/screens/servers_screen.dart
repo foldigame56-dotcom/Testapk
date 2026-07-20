@@ -1,80 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_v2ray/flutter_v2ray.dart';
 import 'package:provider/provider.dart';
 import '../services/server_store.dart';
-import '../services/v2ray_service.dart';
+import '../services/ping_store.dart';
 import '../theme/app_theme.dart';
 import '../widgets/server_tile.dart';
 import 'subscription_screen.dart';
 
-class ServersScreen extends StatefulWidget {
+class ServersScreen extends StatelessWidget {
   const ServersScreen({super.key});
-
-  @override
-  State<ServersScreen> createState() => _ServersScreenState();
-}
-
-class _ServersScreenState extends State<ServersScreen> {
-  final Map<String, int> _pings = {};
-  final Set<String> _pinging = {};
-  bool _pingingAll = false;
-  bool _autoSelecting = false;
-
-  Future<void> _pingOne(String link) async {
-    final v2ray = context.read<V2RayService>();
-    setState(() => _pinging.add(link));
-    final ms = await v2ray.pingServer(link);
-    if (!mounted) return;
-    setState(() {
-      _pings[link] = ms;
-      _pinging.remove(link);
-    });
-  }
-
-  /// Проверяет все сервера — параллельно (безопасный лимит уже встроен
-  /// в V2RayService, так что тут можно просто запустить всё разом).
-  Future<void> _pingAll() async {
-    final store = context.read<ServerStore>();
-    setState(() => _pingingAll = true);
-    await Future.wait(store.servers.map(_pingOne));
-    if (mounted) setState(() => _pingingAll = false);
-  }
-
-  /// Пингует все сервера, выбирает тот, где меньше всего задержка,
-  /// и делает его текущим выбранным сервером.
-  Future<void> _autoSelectBest() async {
-    final store = context.read<ServerStore>();
-    if (store.servers.isEmpty) return;
-
-    setState(() => _autoSelecting = true);
-    await Future.wait(store.servers.map(_pingOne));
-
-    String? best;
-    int bestPing = 1 << 30;
-    for (final link in store.servers) {
-      final ping = _pings[link];
-      if (ping != null && ping > 0 && ping < bestPing) {
-        bestPing = ping;
-        best = link;
-      }
-    }
-
-    if (!mounted) return;
-    setState(() => _autoSelecting = false);
-
-    if (best == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ни один сервер не ответил, попробуй позже')),
-      );
-      return;
-    }
-
-    await store.selectServer(best);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Выбран лучший сервер — $bestPing мс')),
-      );
-    }
-  }
 
   String _formatBytes(int? bytes) {
     if (bytes == null) return '—';
@@ -84,13 +18,22 @@ class _ServersScreenState extends State<ServersScreen> {
     return '${(bytes / (1024 * 1024)).toStringAsFixed(0)} МБ';
   }
 
+  String _remarkFor(String link) {
+    try {
+      final parsed = FlutterV2ray.parseFromURL(link);
+      return parsed.remark.isNotEmpty ? parsed.remark : link;
+    } catch (_) {
+      return link;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final store = context.watch<ServerStore>();
+    final pingStore = context.watch<PingStore>();
     final hasSubInfo = store.subscriptionTitle != null ||
         store.trafficTotalBytes != null ||
         store.expiresAt != null;
-    final busy = _pingingAll || _autoSelecting;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -99,14 +42,16 @@ class _ServersScreenState extends State<ServersScreen> {
         actions: [
           IconButton(
             tooltip: 'Проверить все серверы',
-            icon: _pingingAll
+            icon: pingStore.pingingAll
                 ? const SizedBox(
                     width: 20,
                     height: 20,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.network_check),
-            onPressed: (busy || store.servers.isEmpty) ? null : _pingAll,
+            onPressed: (pingStore.pingingAll || store.servers.isEmpty)
+                ? null
+                : () => pingStore.pingAll(store.servers),
           ),
           IconButton(
             icon: const Icon(Icons.settings),
@@ -173,25 +118,36 @@ class _ServersScreenState extends State<ServersScreen> {
               ),
             if (store.servers.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                 child: Material(
                   color: Colors.transparent,
                   child: InkWell(
-                    borderRadius: BorderRadius.circular(18),
-                    onTap: busy ? null : _autoSelectBest,
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: () => store.setAutoSelect(true),
                     child: Container(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 14),
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: AppTheme.gold, width: 1.2),
-                        color: AppTheme.gold.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(16),
+                        color: AppTheme.gold.withOpacity(0.1),
+                        border: Border.all(
+                          color: AppTheme.gold,
+                          width: store.autoSelectEnabled ? 1.6 : 1,
+                        ),
                       ),
                       child: Row(
                         children: [
-                          _autoSelecting
+                          Icon(
+                            store.autoSelectEnabled
+                                ? Icons.radio_button_checked
+                                : Icons.radio_button_off,
+                            color: AppTheme.gold,
+                          ),
+                          const SizedBox(width: 12),
+                          pingStore.autoSelecting
                               ? const SizedBox(
-                                  width: 24,
-                                  height: 24,
+                                  width: 18,
+                                  height: 18,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
                                     color: AppTheme.gold,
@@ -199,7 +155,7 @@ class _ServersScreenState extends State<ServersScreen> {
                                 )
                               : const Icon(Icons.bolt_rounded,
                                   color: AppTheme.gold),
-                          const SizedBox(width: 14),
+                          const SizedBox(width: 12),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -212,9 +168,9 @@ class _ServersScreenState extends State<ServersScreen> {
                                   ),
                                 ),
                                 Text(
-                                  _autoSelecting
+                                  pingStore.autoSelecting
                                       ? 'Проверяю все сервера...'
-                                      : 'Найдёт сервер с минимальным пингом',
+                                      : 'При каждом подключении сам выберет самый быстрый',
                                   style: const TextStyle(
                                     color: Colors.white70,
                                     fontSize: 12,
@@ -252,11 +208,12 @@ class _ServersScreenState extends State<ServersScreen> {
             else
               ...store.servers.map((link) => ServerTile(
                     link: link,
-                    selected: store.selectedServer == link,
-                    pingMs: _pings[link],
-                    pinging: _pinging.contains(link),
+                    selected:
+                        !store.autoSelectEnabled && store.selectedServer == link,
+                    pingMs: pingStore.pings[link],
+                    pinging: pingStore.pinging.contains(link),
                     onTap: () => store.selectServer(link),
-                    onPing: () => _pingOne(link),
+                    onPing: () => pingStore.pingOne(link),
                   )),
           ],
         ),

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/server_store.dart';
 import '../services/v2ray_service.dart';
 import '../services/settings_store.dart';
+import '../services/ping_store.dart';
 import '../theme/app_theme.dart';
 import 'servers_screen.dart';
 import 'settings_screen.dart';
@@ -17,6 +18,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   bool _busy = false;
+  String _statusText = '';
   bool _autoConnectTried = false;
 
   @override
@@ -31,9 +33,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final settings = context.read<SettingsStore>();
     final store = context.read<ServerStore>();
     final v2ray = context.read<V2RayService>();
-    if (settings.autoConnect &&
-        store.selectedServer != null &&
-        !v2ray.isConnected) {
+    final hasTarget = store.autoSelectEnabled || store.selectedServer != null;
+    if (settings.autoConnect && hasTarget && !v2ray.isConnected) {
       await _toggle();
     }
   }
@@ -51,25 +52,63 @@ class _HomeScreenState extends State<HomeScreen> {
     final v2ray = context.read<V2RayService>();
     final store = context.read<ServerStore>();
     final settings = context.read<SettingsStore>();
+    final pingStore = context.read<PingStore>();
 
     if (v2ray.isConnected) {
       setState(() => _busy = true);
       await v2ray.disconnect();
-      setState(() => _busy = false);
+      setState(() {
+        _busy = false;
+        _statusText = '';
+      });
       return;
     }
 
-    if (store.selectedServer == null) {
+    String? target = store.selectedServer;
+
+    if (store.autoSelectEnabled) {
+      if (store.servers.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Список серверов пуст')),
+        );
+        return;
+      }
+      setState(() {
+        _busy = true;
+        _statusText = 'Проверяю все сервера...';
+      });
+      target = await pingStore.findBest(store.servers);
+      if (target == null) {
+        setState(() {
+          _busy = false;
+          _statusText = '';
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Ни один сервер не ответил, попробуй позже')),
+          );
+        }
+        return;
+      }
+      store.setAutoSelectedLink(target);
+    } else if (target == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Сначала выбери сервер')),
       );
       return;
     }
 
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _statusText = 'Подключаюсь...';
+    });
     final granted = await v2ray.requestPermission();
     if (!granted) {
-      setState(() => _busy = false);
+      setState(() {
+        _busy = false;
+        _statusText = '';
+      });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Нужно разрешение на VPN-соединение')),
@@ -78,7 +117,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
     try {
-      await v2ray.connect(store.selectedServer!, settings: settings);
+      await v2ray.connect(target, settings: settings);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -86,7 +125,10 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     }
-    setState(() => _busy = false);
+    setState(() {
+      _busy = false;
+      _statusText = '';
+    });
   }
 
   @override
@@ -94,6 +136,17 @@ class _HomeScreenState extends State<HomeScreen> {
     final v2ray = context.watch<V2RayService>();
     final store = context.watch<ServerStore>();
     final connected = v2ray.isConnected;
+
+    final String currentServerLabel;
+    if (store.autoSelectEnabled) {
+      currentServerLabel = store.autoSelectedLink != null
+          ? '⚡ ${_remarkFor(store.autoSelectedLink!)} (авто)'
+          : '⚡ Автовыбор';
+    } else if (store.selectedServer != null) {
+      currentServerLabel = _remarkFor(store.selectedServer!);
+    } else {
+      currentServerLabel = 'Сервер не выбран';
+    }
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -150,50 +203,151 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 24),
             Text(
-              connected ? 'ПОДКЛЮЧЕНО' : 'ОТКЛЮЧЕНО',
+              _busy
+                  ? _statusText.isNotEmpty
+                      ? _statusText.toUpperCase()
+                      : 'ПОДКЛЮЧЕНИЕ...'
+                  : connected
+                      ? 'ПОДКЛЮЧЕНО'
+                      : 'ОТКЛЮЧЕНО',
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
                 color: connected ? AppTheme.connectedGreen : Colors.grey,
                 letterSpacing: 1.5,
               ),
+              textAlign: TextAlign.center,
             ),
+            if (connected) ...[
+              const SizedBox(height: 6),
+              Text(
+                currentServerLabel,
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+            ],
             const SizedBox(height: 32),
             const Spacer(),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(18),
-                  gradient: LinearGradient(
-                    colors: [
-                      AppTheme.surface,
-                      AppTheme.surfaceLight.withOpacity(0.6),
+              child: Column(
+                children: [
+                  Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(18),
+                      gradient: LinearGradient(
+                        colors: [
+                          AppTheme.surface,
+                          AppTheme.surfaceLight.withOpacity(0.6),
+                        ],
+                      ),
+                      border: Border.all(
+                        color: store.autoSelectEnabled
+                            ? AppTheme.gold
+                            : AppTheme.surfaceLight,
+                      ),
+                    ),
+                    child: ListTile(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      leading: Icon(
+                        store.autoSelectEnabled
+                            ? Icons.bolt_rounded
+                            : Icons.dns_rounded,
+                        color:
+                            store.autoSelectEnabled ? AppTheme.gold : AppTheme.cyan,
+                      ),
+                      title: Text(currentServerLabel),
+                      subtitle: Text('${store.servers.length} серверов доступно'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const ServersScreen()),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _StatChip(
+                          icon: Icons.upload_rounded,
+                          label: 'Отдано',
+                          value: _formatSpeed(v2ray.status.uploadSpeed),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _StatChip(
+                          icon: Icons.download_rounded,
+                          label: 'Получено',
+                          value: _formatSpeed(v2ray.status.downloadSpeed),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _StatChip(
+                          icon: Icons.timer_outlined,
+                          label: 'Время',
+                          value: v2ray.status.duration.isNotEmpty
+                              ? v2ray.status.duration
+                              : '—',
+                        ),
+                      ),
                     ],
                   ),
-                  border: Border.all(color: AppTheme.surfaceLight),
-                ),
-                child: ListTile(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  leading: const Icon(Icons.dns_rounded, color: AppTheme.cyan),
-                  title: Text(
-                    store.selectedServer != null
-                        ? _remarkFor(store.selectedServer!)
-                        : 'Сервер не выбран',
-                  ),
-                  subtitle: Text('${store.servers.length} серверов доступно'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const ServersScreen()),
-                  ),
-                ),
+                ],
               ),
             ),
             const SizedBox(height: 24),
           ],
         ),
+      ),
+    );
+  }
+
+  String _formatSpeed(int? bytesPerSecond) {
+    final v = bytesPerSecond ?? 0;
+    if (v <= 0) return '0 Кб/с';
+    if (v >= 1024 * 1024) {
+      return '${(v / (1024 * 1024)).toStringAsFixed(1)} Мб/с';
+    }
+    return '${(v / 1024).toStringAsFixed(0)} Кб/с';
+  }
+}
+
+class _StatChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+
+  const _StatChip({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.surfaceLight),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, size: 18, color: AppTheme.cyan),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+          ),
+          Text(
+            label,
+            style: const TextStyle(color: Colors.white54, fontSize: 10),
+          ),
+        ],
       ),
     );
   }
