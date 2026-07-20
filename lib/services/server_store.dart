@@ -5,6 +5,7 @@ import 'subscription_service.dart';
 const _kSubUrlKey = 'subscription_url';
 const _kServersKey = 'servers_list';
 const _kSelectedKey = 'selected_server';
+const _kAutoSelectKey = 'auto_select_enabled';
 const _kTitleKey = 'sub_title';
 const _kUsedKey = 'sub_used';
 const _kTotalKey = 'sub_total';
@@ -17,6 +18,10 @@ class ServerStore extends ChangeNotifier {
   String? subscriptionUrl;
   List<String> servers = [];
   String? selectedServer;
+  bool autoSelectEnabled = false;
+  // Не сохраняется на диск — просто для отображения, какой сервер был
+  // выбран автовыбором при последнем подключении.
+  String? autoSelectedLink;
   bool loading = false;
   String? lastError;
 
@@ -30,6 +35,7 @@ class ServerStore extends ChangeNotifier {
     subscriptionUrl = prefs.getString(_kSubUrlKey);
     servers = prefs.getStringList(_kServersKey) ?? [];
     selectedServer = prefs.getString(_kSelectedKey);
+    autoSelectEnabled = prefs.getBool(_kAutoSelectKey) ?? false;
     subscriptionTitle = prefs.getString(_kTitleKey);
     trafficUsedBytes = prefs.getInt(_kUsedKey);
     trafficTotalBytes = prefs.getInt(_kTotalKey);
@@ -93,8 +99,25 @@ class ServerStore extends ChangeNotifier {
 
   Future<void> selectServer(String link) async {
     selectedServer = link;
+    autoSelectEnabled = false;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kSelectedKey, link);
+    await prefs.setBool(_kAutoSelectKey, false);
+    notifyListeners();
+  }
+
+  /// Включает/выключает режим "автовыбор" — при подключении будет
+  /// пингован весь список и выбран сервер с минимальной задержкой,
+  /// заново при каждом подключении (а не один раз навсегда).
+  Future<void> setAutoSelect(bool enabled) async {
+    autoSelectEnabled = enabled;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kAutoSelectKey, enabled);
+    notifyListeners();
+  }
+
+  void setAutoSelectedLink(String? link) {
+    autoSelectedLink = link;
     notifyListeners();
   }
 }
