@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'services/server_store.dart';
 import 'services/v2ray_service.dart';
 import 'services/settings_store.dart';
+import 'services/ping_store.dart';
 import 'screens/home_screen.dart';
 import 'theme/app_theme.dart';
 
@@ -20,6 +21,7 @@ class GradelVpnApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => ServerStore()..loadFromDisk()),
         ChangeNotifierProvider(create: (_) => V2RayService()..init()),
         ChangeNotifierProvider(create: (_) => SettingsStore()..loadFromDisk()),
+        ChangeNotifierProvider(create: (_) => PingStore()),
       ],
       child: MaterialApp(
         title: 'GradelVPN',
