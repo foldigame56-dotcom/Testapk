@@ -36,12 +36,52 @@ jobs:
               '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n'
               '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />\n'
               '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n'
+              '    <uses-permission android:name="android.permission.BIND_QUICK_SETTINGS_TILE" />\n'
           )
           if "FOREGROUND_SERVICE_DATA_SYNC" not in content:
               content = content.replace("<application", perms + "\n    <application", 1)
+
+          # Без <queries> Android 11+ (API 30+) прячет от приложения все
+          # установленные пакеты — canLaunchUrl()/launchUrl() из url_launcher
+          # тихо не находит, чем открыть https-ссылку, и настройки "Бот
+          # подписки" / "Канал GradelVPN" просто ничего не делают по нажатию.
+          if "<queries>" not in content:
+              queries = (
+                  '    <queries>\n'
+                  '        <intent>\n'
+                  '            <action android:name="android.intent.action.VIEW" />\n'
+                  '            <category android:name="android.intent.category.BROWSABLE" />\n'
+                  '            <data android:scheme="https" />\n'
+                  '        </intent>\n'
+                  '    </queries>\n'
+              )
+              content = content.replace("</manifest>", queries + "</manifest>")
+
+          # Регистрируем плитку "лучший сервер" в шторке уведомлений.
+          if "QuickConnectTileService" not in content:
+              tile_service = (
+                  '        <service android:name=".QuickConnectTileService"\n'
+                  '            android:label="GradelVPN"\n'
+                  '            android:icon="@mipmap/ic_launcher"\n'
+                  '            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"\n'
+                  '            android:exported="true">\n'
+                  '            <intent-filter>\n'
+                  '                <action android:name="android.service.quicksettings.action.QS_TILE" />\n'
+                  '            </intent-filter>\n'
+                  '        </service>\n'
+              )
+              content = content.replace("</application>", tile_service + "    </application>")
+
           with open(path, "w") as f:
               f.write(content)
           EOF
+
+      - name: Copy native Android overlay (quick-settings tile + MainActivity bridge)
+        run: |
+          cp android-overlay/app/src/main/kotlin/com/gradelvpn/gradelvpn/MainActivity.kt \
+             android/app/src/main/kotlin/com/gradelvpn/gradelvpn/MainActivity.kt
+          cp android-overlay/app/src/main/kotlin/com/gradelvpn/gradelvpn/QuickConnectTileService.kt \
+             android/app/src/main/kotlin/com/gradelvpn/gradelvpn/QuickConnectTileService.kt
 
       - name: Set minSdkVersion to 21+
         run: |
@@ -76,6 +116,20 @@ jobs:
           echo "--- результат (должны быть свежие timestamp/размер) ---"
           ls -la android/app/src/main/res/mipmap-xxhdpi/ || true
           file android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png || true
+
+      # "flutter create" сам кладёт adaptive-иконку в mipmap-anydpi-v26/ic_launcher.xml,
+      # которая на Android 8+ приоритетнее обычных PNG с тем же именем — а она всё
+      # ещё ссылается на дефолтный вектор-логотип Flutter (ic_launcher_foreground.xml),
+      # а не на нашу картинку. flutter_launcher_icons её не трогает (мы не указали
+      # adaptive_icon_background/foreground), поэтому именно она и продолжала
+      # побеждать везде, включая иконку в уведомлении, сколько ни перегенерируй PNG.
+      - name: Remove stale default adaptive icon
+        run: |
+          rm -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          rm -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+          rm -f android/app/src/main/res/drawable*/ic_launcher_foreground.xml
+          rm -f android/app/src/main/res/values/ic_launcher_background.xml
+          ls -la android/app/src/main/res/mipmap-anydpi-v26/ 2>/dev/null || echo "папка пуста/удалена — это ожидаемо"
 
       - name: Build release APK
         run: flutter build apk --release
