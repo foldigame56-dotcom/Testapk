@@ -33,7 +33,7 @@ class V2RayService extends ChangeNotifier {
     // логотипом Flutter, который плагин и показывал в уведомлении.
     await _v2ray.initializeV2Ray(
       notificationIconResourceType: 'mipmap',
-      notificationIconResourceName: 'launcher_icon',
+      notificationIconResourceName: 'ic_launcher',
     );
     _initialized = true;
   }
