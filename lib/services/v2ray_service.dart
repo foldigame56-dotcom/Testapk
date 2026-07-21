@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_v2ray/flutter_v2ray.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'settings_store.dart';
 
 /// Обёртка над flutter_v2ray, которая держит состояние подключения
@@ -31,7 +32,19 @@ class V2RayService extends ChangeNotifier {
 
   /// Показывает системный диалог "Разрешить приложению создавать VPN-соединения".
   /// Нужно вызвать один раз перед первым подключением.
-  Future<bool> requestPermission() => _v2ray.requestPermission();
+  ///
+  /// На Android 13+ (API 33) уведомления требуют ОТДЕЛЬНОГО runtime-разрешения
+  /// (POST_NOTIFICATIONS). Если его не запросить, система молча блокирует
+  /// собственное уведомление плагина (иконка + "подключено к <сервер>" +
+  /// кнопка отключения) — и остаётся только обязательное системное
+  /// уведомление Android о работе VPN с общим текстом, без деталей. Поэтому
+  /// разрешение на уведомления запрашивается здесь же, до/вместе с VPN-разрешением.
+  Future<bool> requestPermission() async {
+    if (await Permission.notification.isDenied) {
+      await Permission.notification.request();
+    }
+    return _v2ray.requestPermission();
+  }
 
   Future<void> connect(String shareLink, {SettingsStore? settings}) async {
     final parsed = FlutterV2ray.parseFromURL(shareLink);

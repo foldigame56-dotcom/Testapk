@@ -36,6 +36,27 @@ class PingStore extends ChangeNotifier {
         sw.stop();
         result = sw.elapsedMilliseconds;
         socket.destroy();
+
+        // Ниже ~2 мс TCP-рукопожатие до внешнего интернет-хоста физически
+        // невозможно (это уже время реакции локальной петли). Если сюда
+        // попали — значит соединение на самом деле ушло не туда, куда
+        // должно: либо это адрес из локальной/частной сети (127.0.0.1,
+        // 10.x, 192.168.x и т.д. — например, если в ссылке сервера
+        // случайно оказался локальный адрес), либо сокет перехватил уже
+        // включённый на устройстве системный VPN/прокси (см. v2RayTun /
+        // другой профиль в шторке — тогда ping меряет время до ЕГО
+        // локального интерфейса, а не до настоящего сервера).
+        //
+        // Отдельно от этого: у серверов за CDN (Cloudflare и т.п., когда
+        // хост в ссылке — это домен-фронт, а не сам бэкенд) честный TCP-пинг
+        // будет мерить время до ближайшей точки CDN, а не до реального
+        // сервера — и тоже может выглядеть подозрительно низким. Это не
+        // баг измерения, а свойство самой конфигурации; узнать реальную
+        // задержку до бэкенда можно только соединением через сам V2Ray-ядро
+        // ("настоящий" пинг), а не голым TCP.
+        if (result < 2 || _isPrivateOrLoopback(hostPort.host)) {
+          result = -1;
+        }
       } catch (_) {
         result = -1;
       }
@@ -75,6 +96,20 @@ class PingStore extends ChangeNotifier {
     }
     return best;
   }
+}
+
+bool _isPrivateOrLoopback(String host) {
+  final ip = InternetAddress.tryParse(host);
+  if (ip == null) return false; // домен — резолвится системой, не наш случай
+  if (ip.isLoopback) return true;
+  if (ip.type == InternetAddressType.IPv4) {
+    final o = ip.rawAddress;
+    if (o[0] == 10) return true;
+    if (o[0] == 172 && o[1] >= 16 && o[1] <= 31) return true;
+    if (o[0] == 192 && o[1] == 168) return true;
+    if (o[0] == 169 && o[1] == 254) return true;
+  }
+  return false;
 }
 
 class _HostPort {
