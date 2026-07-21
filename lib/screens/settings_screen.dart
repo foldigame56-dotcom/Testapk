@@ -8,10 +8,27 @@ import '../theme/app_theme.dart';
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
-  Future<void> _openUrl(String url) async {
+  Future<void> _openUrl(BuildContext context, String url) async {
     final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    // Раньше здесь стояла проверка canLaunchUrl(uri) — но без секции
+    // <queries> в AndroidManifest (её не было в проекте) Android 11+
+    // скрывает от приложения все установленные пакеты, из-за чего
+    // canLaunchUrl тихо возвращает false и ссылка просто не открывается,
+    // без единой ошибки. Правильный способ — пробовать открыть напрямую
+    // и ловить исключение, если совсем ничего не смогло открыть ссылку.
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Не удалось открыть ссылку')),
+        );
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Не удалось открыть ссылку')),
+        );
+      }
     }
   }
 
@@ -57,7 +74,8 @@ class SettingsScreen extends StatelessWidget {
                 leading: const Icon(Icons.subscriptions_outlined,
                     color: AppTheme.cyan),
                 title: Text(store.subscriptionTitle ?? 'Подписка не названа'),
-                subtitle: Text('${store.servers.length} серверов в списке'),
+                subtitle: Text(_subscriptionSubtitle(store)),
+                isThreeLine: store.trafficTotalBytes != null,
               ),
               const Divider(height: 1),
               ListTile(
@@ -82,7 +100,7 @@ class SettingsScreen extends StatelessWidget {
                 title: const Text('Бот подписки'),
                 subtitle: const Text('@gradelvpnbot'),
                 trailing: const Icon(Icons.open_in_new, size: 18),
-                onTap: () => _openUrl('https://t.me/gradelvpnbot'),
+                onTap: () => _openUrl(context, 'https://t.me/gradelvpnbot'),
               ),
               const Divider(height: 1),
               ListTile(
@@ -91,7 +109,7 @@ class SettingsScreen extends StatelessWidget {
                 title: const Text('Канал GradelVPN'),
                 subtitle: const Text('@gradelvpn'),
                 trailing: const Icon(Icons.open_in_new, size: 18),
-                onTap: () => _openUrl('https://t.me/gradelvpn'),
+                onTap: () => _openUrl(context, 'https://t.me/gradelvpn'),
               ),
             ],
           ),
@@ -109,6 +127,30 @@ class SettingsScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+String _subscriptionSubtitle(ServerStore store) {
+  final parts = <String>['${store.servers.length} серверов в списке'];
+  if (store.trafficTotalBytes != null) {
+    final used = _formatBytes(store.trafficUsedBytes ?? 0);
+    final total = _formatBytes(store.trafficTotalBytes!);
+    parts.add('Трафик: $used из $total');
+  }
+  if (store.expiresAt != null) {
+    final d = store.expiresAt!;
+    final date = '${d.day.toString().padLeft(2, '0')}.'
+        '${d.month.toString().padLeft(2, '0')}.${d.year}';
+    parts.add('Действует до $date');
+  }
+  return parts.join('\n');
+}
+
+String _formatBytes(int bytes) {
+  const gb = 1024 * 1024 * 1024;
+  const mb = 1024 * 1024;
+  if (bytes >= gb) return '${(bytes / gb).toStringAsFixed(1)} ГБ';
+  if (bytes >= mb) return '${(bytes / mb).toStringAsFixed(0)} МБ';
+  return '$bytes Б';
 }
 
 class _SectionTitle extends StatelessWidget {

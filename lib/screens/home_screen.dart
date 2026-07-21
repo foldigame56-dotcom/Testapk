@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_v2ray/flutter_v2ray.dart';
 import 'package:provider/provider.dart';
 import '../services/server_store.dart';
@@ -16,15 +17,69 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen>
+    with SingleTickerProviderStateMixin {
   bool _busy = false;
   String _statusText = '';
   bool _autoConnectTried = false;
 
+  // Раньше кнопка была статичным кругом без единой анимации ни в
+  // состоянии "подключаюсь", ни в "подключено" — отсюда ощущение, что
+  // анимации "недоработаны". Этот контроллер крутит мягкое дыхание
+  // (масштаб + прозрачность внешнего кольца), которое ускоряется во
+  // время подключения и медленно идёт, когда VPN уже активен.
+  late final AnimationController _pulseController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  )..repeat(reverse: true);
+
+  // Канал в MainActivity.kt — плитка в шторке не может напрямую дёрнуть
+  // Dart-код, пока движок Flutter не поднят, поэтому она просто открывает
+  // приложение с пометкой "нажали плитку" (см. android-overlay/), а тут
+  // при старте мы её забираем и сразу подключаемся к лучшему серверу.
+  static const _quickConnectChannel = MethodChannel('com.gradelvpn/quick_connect');
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAutoConnect());
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final fromTile = await _takePendingQuickConnect();
+      if (fromTile) {
+        await _quickConnectBestServer();
+      } else {
+        await _maybeAutoConnect();
+      }
+    });
+  }
+
+  Future<bool> _takePendingQuickConnect() async {
+    try {
+      final result = await _quickConnectChannel.invokeMethod<bool>(
+        'takePendingQuickConnect',
+      );
+      return result ?? false;
+    } catch (_) {
+      return false; // канал недоступен (например, при разработке/тестах)
+    }
+  }
+
+  /// То же самое, что и обычный автовыбор + подключение, только форсирует
+  /// режим "автовыбор" на этот единственный запуск, даже если у
+  /// пользователя выбран конкретный сервер вручную — так и задумано для
+  /// плитки: она всегда бьёт по всем серверам и берёт лучший.
+  Future<void> _quickConnectBestServer() async {
+    final store = context.read<ServerStore>();
+    if (!store.autoSelectEnabled) {
+      await store.setAutoSelect(true);
+    }
+    if (!mounted) return;
+    await _toggle();
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
   }
 
   Future<void> _maybeAutoConnect() async {
@@ -137,6 +192,10 @@ class _HomeScreenState extends State<HomeScreen> {
     final store = context.watch<ServerStore>();
     final connected = v2ray.isConnected;
 
+    _pulseController.duration = _busy
+        ? const Duration(milliseconds: 700) // быстрее — идёт подключение
+        : const Duration(milliseconds: 1800); // медленнее — просто дышит
+
     final String currentServerLabel;
     if (store.autoSelectEnabled) {
       currentServerLabel = store.autoSelectedLink != null
@@ -170,34 +229,60 @@ class _HomeScreenState extends State<HomeScreen> {
             const Spacer(),
             GestureDetector(
               onTap: _busy ? null : _toggle,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
-                width: 190,
-                height: 190,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: connected
-                      ? AppTheme.connectedGradient
-                      : AppTheme.accentGradient,
-                  boxShadow: [
-                    BoxShadow(
-                      color: (connected
-                              ? AppTheme.connectedGreen
-                              : AppTheme.electricBlue)
-                          .withOpacity(0.45),
-                      blurRadius: 40,
-                      spreadRadius: 4,
-                    ),
-                  ],
-                ),
-                child: Center(
-                  child: _busy
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : Icon(
-                          Icons.power_settings_new,
-                          size: 68,
-                          color: Colors.white,
+              child: AnimatedBuilder(
+                animation: _pulseController,
+                builder: (context, child) {
+                  final t = _pulseController.value; // 0 → 1 → 0
+                  final ringColor =
+                      connected ? AppTheme.connectedGreen : AppTheme.electricBlue;
+                  return Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // Внешнее дышащее кольцо — расширяется и растворяется.
+                      Container(
+                        width: 190 + t * 34,
+                        height: 190 + t * 34,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: ringColor.withOpacity(0.35 * (1 - t)),
+                            width: 2,
+                          ),
                         ),
+                      ),
+                      child!,
+                    ],
+                  );
+                },
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  width: 190,
+                  height: 190,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: connected
+                        ? AppTheme.connectedGradient
+                        : AppTheme.accentGradient,
+                    boxShadow: [
+                      BoxShadow(
+                        color: (connected
+                                ? AppTheme.connectedGreen
+                                : AppTheme.electricBlue)
+                            .withOpacity(0.45),
+                        blurRadius: 40,
+                        spreadRadius: 4,
+                      ),
+                    ],
+                  ),
+                  child: Center(
+                    child: _busy
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : Icon(
+                            Icons.power_settings_new,
+                            size: 68,
+                            color: Colors.white,
+                          ),
+                  ),
                 ),
               ),
             ),
