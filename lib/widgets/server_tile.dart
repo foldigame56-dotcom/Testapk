@@ -46,34 +46,54 @@ class ServerTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      shape: RoundedRectangleBorder(
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
         borderRadius: BorderRadius.circular(16),
-        side: selected
-            ? const BorderSide(color: AppTheme.cyan, width: 1.5)
-            : BorderSide(color: AppTheme.surfaceLight, width: 1),
+        border: Border.all(
+          color: selected ? AppTheme.cyan : AppTheme.surfaceLight,
+          width: selected ? 1.5 : 1,
+        ),
       ),
+      clipBehavior: Clip.antiAlias,
       child: ListTile(
         onTap: onTap,
-        leading: Icon(
-          selected ? Icons.radio_button_checked : Icons.radio_button_off,
-          color: selected ? AppTheme.cyan : Colors.grey,
+        leading: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 200),
+          transitionBuilder: (child, anim) =>
+              ScaleTransition(scale: anim, child: child),
+          child: Icon(
+            selected ? Icons.radio_button_checked : Icons.radio_button_off,
+            key: ValueKey(selected),
+            color: selected ? AppTheme.cyan : Colors.grey,
+          ),
         ),
         title: Text(_remark, overflow: TextOverflow.ellipsis),
-        trailing: pinging
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : TextButton(
-                onPressed: onPing,
-                child: Text(
-                  _pingText().isEmpty ? 'ping' : _pingText(),
-                  style: TextStyle(color: _pingColor()),
+        trailing: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 220),
+          transitionBuilder: (child, anim) => FadeTransition(
+            opacity: anim,
+            child: ScaleTransition(scale: anim, child: child),
+          ),
+          child: pinging
+              ? const SizedBox(
+                  key: ValueKey('spinner'),
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : TextButton(
+                  key: ValueKey('ping-${pingMs ?? 'none'}'),
+                  onPressed: onPing,
+                  child: Text(
+                    _pingText().isEmpty ? 'ping' : _pingText(),
+                    style: TextStyle(color: _pingColor()),
+                  ),
                 ),
-              ),
+        ),
       ),
     );
   }
