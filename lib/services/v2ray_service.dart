@@ -26,7 +26,15 @@ class V2RayService extends ChangeNotifier {
 
   Future<void> init() async {
     if (_initialized) return;
-    await _v2ray.initializeV2Ray();
+    // По умолчанию плагин ищет иконку для уведомления по имени
+    // mipmap/ic_launcher — но flutter_launcher_icons в этом проекте
+    // настроен генерировать иконку под именем launcher_icon (см.
+    // pubspec.yaml), поэтому ic_launcher так и остаётся дефолтным
+    // логотипом Flutter, который плагин и показывал в уведомлении.
+    await _v2ray.initializeV2Ray(
+      notificationIconResourceType: 'mipmap',
+      notificationIconResourceName: 'launcher_icon',
+    );
     _initialized = true;
   }
 
